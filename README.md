@@ -1,102 +1,211 @@
-# 🍽️ 食行動音声データによる嚥下音検出実験
+### 食行動音声データによる嚥下音検出実験
 
-本プロジェクトは、**皮膚接触型マイクで収録した咀嚼・嚥下音**を用いた音響イベント検出モデルの構築と評価を行います。
+本プロジェクトでは、**皮膚接触型マイクで収録した咀嚼・嚥下音**に対し、自己教師あり音響特徴（SSL features）を用いてイベント検出（chewing, swallowing, noise）を行うモデルを構築・評価します。
 
----
+#### 1. 全体構成
 
-## 🔁 全体の構成
-
-```
+```plaintext
 share/
-├── data_prepare/                # データ準備に関するノートブック
-│   ├── 0_Eat_behavior_dataset.ipynb  # データセット展開・前処理・分割
-│   ├── 1_eating_json.ipynb           # 音声ファイルとラベルを対応付けてJSON作成
-│   └── 2_split_json.ipynb            # 訓練 / 検証 / テスト用にデータを分割
+├── data_prepare/
+│ ├── 0_Eat_behavior_dataset.ipynb
+│ ├── 1_eating_json.ipynb
+│ └── 2_split_json.ipynb
 │
 ├── analysys/
-│   └── show_all_results.ipynb   # モデルの出力結果の可視化・集計
+│ └── show_all_results.ipynb
 │
-├── experiment.py                # 実験の実行スクリプト（学習・推論・評価）
-└── README.md                    # このファイル
+├── experiment.py
+└── README.md
 ```
 
----
+#### 2. データ準備 (`data_prepare/`)
 
-## 📦 1. データ準備：`data_prepare/`
-
-### 🔹 ステップ概要
+##### ステップ概要
 
 | ステップ | 内容 |
 |---------|------|
-| `0_Eat_behavior_dataset.ipynb` | データダウンロード・分割・セグメント化・HPF適用までの全処理 |
-| `1_eating_json.ipynb`          | `.wav` と `.txt` を対応付けた JSON ファイルを作成 |
-| `2_split_json.ipynb`           | 訓練・検証・テストセットにデータを分割（比率で指定可） |
+| `0_Eat_behavior_dataset.ipynb` | 音声/ラベルのダウンロード・整形・HPF適用 |
+| `1_eating_json.ipynb` | .wav と .txt を対応付けた JSON 作成 |
+| `2_split_json.ipynb` | JSON を学習・検証・テスト用に分割 |
 
-### 🔹 実行前に必要なライブラリ
+##### 実行前に必要なライブラリ
 
 ```bash
 pip install gdown librosa soundfile tqdm scipy
 ```
 
-### 🔹 実行の流れ（代表: 0_Eat_behavior_dataset）
+**処理の流れ（例：`0_Eat_behavior_dataset`）**
 
-1. Google Drive から `.tar` ファイルをダウンロード
-2. 音声ファイルのリサンプリング（16kHz）
-3. ラベルテキストの整形と統合
-4. 10秒以下のセグメントを自動生成
-5. 合成音声保存 + 対応テキストラベル出力
-6. 長時間ファイル削除（>17秒）
-7. 全 `.wav` に High-Pass Filter（HPF）を適用
-8. 元のフルファイルを削除し、必要最小限に整理
+1. Google Drive から .tar ファイルをダウンロード
+2. 16kHz へのリサンプリング
+3. テキストラベルの整形・統合
+4. 10秒単位でセグメント化・音声生成
+5. 長時間 (>17秒) のファイルを削除
+6. High-Pass Filter（HPF）の適用
+7. 最小限ファイルのみを保存し構造を整理
 
-> 🎯 出力される音声 + ラベルは `dataset/old_wav_aug/conbined/`, `old_text_aug/` に格納されます。
+**出力先：**
 
----
+- 音声: `dataset/old_wav_aug/conbined/`
+- ラベル: `old_text_aug/`
 
-## 🧠 2. モデル学習・評価：`experiment.py`
+#### 3. 学習・推論・評価 (`experiment.py`)
 
-### 🔹 基本的な使い方
-
-```bash
-python experiment.py --model wavlm --task train --json_dir ./dataset/json --output_dir ./result
-```
-
-### 🔹 モデル選択肢
-
-- `--model`：`wavlm`, `wav2vec2`, `hubert`, `mel`, `mfcc` など
-- `--frontend` で手法変更も可能（詳細はスクリプト中に記載）
-
-### 🔹 推論・評価
+##### 基本コマンド
 
 ```bash
-python experiment.py --task inference
+# 学習 + 評価（検証・テスト）
+python experiment.py
+
+# テストのみ実行
+python experiment.py --test
+
+# フレーム単位の確率出力（inference）
+python experiment.py --inference
 ```
+
+##### モデル設定の指定方法
+
+本スクリプトでは、実験条件はすべて `experiment.py` 冒頭部の以下のような定義で切り替えます。
+
+```python
+# 実験定義
+EXPERIMENT_GROUP = "wavlm_gru"
+
+EXPERIMENTS = {
+    "wavlm_gru": [
+        {"name": "wavlm_gru", "ssl_model_name": "microsoft/wavlm-base-plus", "feature_type": "raw", "architecture": "gru"}
+    ],
+    "exp": [
+        {"name": "gru_mel", "feature_type": "mel", "architecture": "gru", "ssl_model_name": None},
+        # ...
+    ]
+}
+```
+
+`EXPERIMENT_GROUP` に指定したキーに対応するリスト内の設定が自動的に読み込まれます。
+
+**各設定のパラメータ:**
+
+- `name`: 実験名
+- `ssl_model_name`: 使用するSSLモデル（例: `"microsoft/wavlm-base-plus"`）
+- `feature_type`: `"raw"`, `"mel"`, `"mfcc"` など
+- `architecture`: `"gru"`, `"lstm"`, `"fc"` など
+- （任意）`dataset_frac`: 使用するデータ割合（`1.0` = 全体）
+
+**実験切り替え方法**: `EXPERIMENT_GROUP` を変更します。
+
+```python
+EXPERIMENT_GROUP = "exp"
+```
+
+#### 4. 結果の可視化 (`analysys/`)
+
+`show_all_results.ipynb` にて、各実験の出力結果（IoU、F1スコアなど）をプロットし比較可能です。
 
 ---
 
-## 📊 3. 結果の可視化：`analysys/`
+## English Version: Swallowing Sound Detection Experiment Using Eating Behavior Audio Data
 
-- `show_all_results.ipynb` で実験ごとの出力を比較可能（IoU, F1スコアなどをプロット）
+This project builds and evaluates models for event detection (chewing, swallowing, noise) using **chewing/swallowing sounds recorded with skin-attached microphones** and self-supervised acoustic features (SSL features).
 
----
+### 1. Project Structure
 
-## 🔚 最終出力構成例
-
+```plaintext
+share/
+├── data_prepare/
+│ ├── 0_Eat_behavior_dataset.ipynb
+│ ├── 1_eating_json.ipynb
+│ └── 2_split_json.ipynb
+│
+├── analysys/
+│ └── show_all_results.ipynb
+│
+├── experiment.py
+└── README.md
 ```
-dataset/
-├── old_wav_aug/
-│   └── conbined/
-│       ├── eat_*.wav
-├── old_text_aug/
-│   └── eat_*.txt
-├── json/
-│   ├── train.json
-│   ├── valid.json
-│   └── test.json
 
-result/
-├── model/
-│   ├── checkpoint.pt
-├── evaluation/
-│   ├── eval_metrics.json
+### 2. Data Preparation (`data_prepare/`)
+
+#### Step Overview
+
+| Step | Description |
+|---------|------|
+|`0_Eat_behavior_dataset.ipynb` | Downloads/processes audio/labels; applies HPF |
+| `1_eating_json.ipynb` | Creates JSON matching .wav and .txt |
+| `2_split_json.ipynb` | Splits JSON into train/val/test |
+
+#### Required Libraries
+
+```bash
+pip install gdown librosa soundfile tqdm scipy
 ```
+
+**Processing Flow (Example: `0_Eat_behavior_dataset`)**
+
+1. Download .tar file from Google Drive.
+2. Resample to 16 kHz.
+3. Process and merge text labels.
+4. Segment into 10-s chunks, generate audio.
+5. Remove long files (>17 seconds).
+6. Apply High-Pass Filter (HPF).
+7. Save necessary files and organize structure.
+
+**Outputs:**
+
+- Audio: `dataset/old_wav_aug/conbined/`
+- Labels: `old_text_aug/`
+
+### 3. Train/Inference/Evaluation (`experiment.py`)
+
+#### Basic Commands
+
+```bash
+# Train + evaluate (validation/test)
+python experiment.py
+
+# Run only test
+python experiment.py --test
+
+# Output frame-level probabilities (inference)
+python experiment.py --inference
+```
+
+#### Model Configuration
+
+Experiment conditions are set in the `experiment.py` script as follows:
+
+```python
+# --- Experiment Definitions ---
+EXPERIMENT_GROUP = "wavlm_gru"
+
+EXPERIMENTS = {
+    "wavlm_gru": [
+        {"name": "wavlm_gru", "ssl_model_name": "microsoft/wavlm-base-plus", "feature_type": "raw", "architecture": "gru"}
+    ],
+    "exp": [
+        {"name": "gru_mel", "feature_type": "mel", "architecture": "gru", "ssl_model_name": None},
+        # ...
+    ]
+}
+```
+
+The list of configurations is automatically loaded based on the key specified in `EXPERIMENT_GROUP`.
+
+**Configuration Parameters:**
+
+- `name`: Experiment name
+- `ssl_model_name`: The SSL model to use (e.g., `"microsoft/wavlm-base-plus"`)
+- `feature_type`: `"raw"`, `"mel"`, `"mfcc"`, etc.
+- `architecture`: `"gru"`, `"lstm"`, `"fc"`, etc.
+- (Optional) `dataset_frac`: Fraction of the data to use (`1.0` = entire dataset)
+
+**How to Change Experiments:** Modify `EXPERIMENT_GROUP`.
+
+```python
+EXPERIMENT_GROUP = "exp"
+```
+
+### 4. Visualization of Results (`analysys/`)
+
+`show_all_results.ipynb` can plot metrics (IoU, F1-score, etc.) for all experiments to facilitate comparison.
